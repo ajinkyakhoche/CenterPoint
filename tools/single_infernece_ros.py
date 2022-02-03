@@ -1,21 +1,24 @@
 
 import rospy
 import ros_numpy
+import tf
 import numpy as np
 import copy
 import json
 import os
 import sys
 import torch
-import time 
+import time
 
 from std_msgs.msg import Header
 import sensor_msgs.point_cloud2 as pc2
 from sensor_msgs.msg import PointCloud2, PointField
 from jsk_recognition_msgs.msg import BoundingBox, BoundingBoxArray
+from vision_msgs.msg import Detection3DArray, Detection3D, BoundingBox3D
 from pyquaternion import Quaternion
+from geometry_msgs.msg import TwistStamped
 
-from det3d import __version__, torchie
+# from det3d import __version__, torchie
 from det3d.models import build_detector
 from det3d.torchie import Config
 from det3d.core.input.voxel_generator import VoxelGenerator
@@ -32,14 +35,14 @@ def get_annotations_indices(types, thresh, label_preds, scores):
     for index in indexs:
         if scores[index] >= thresh:
             annotation_indices.append(index)
-    return annotation_indices  
+    return annotation_indices
 
 
 def remove_low_score_nu(image_anno, thresh):
     img_filtered_annotations = {}
     label_preds_ = image_anno["label_preds"].detach().cpu().numpy()
     scores_ = image_anno["scores"].detach().cpu().numpy()
-    
+
     car_indices =                  get_annotations_indices(0, 0.4, label_preds_, scores_)
     truck_indices =                get_annotations_indices(1, 0.4, label_preds_, scores_)
     construction_vehicle_indices = get_annotations_indices(2, 0.4, label_preds_, scores_)
@@ -50,13 +53,13 @@ def remove_low_score_nu(image_anno, thresh):
     bicycle_indices =              get_annotations_indices(7, 0.15, label_preds_, scores_)
     pedestrain_indices =           get_annotations_indices(8, 0.1, label_preds_, scores_)
     traffic_cone_indices =         get_annotations_indices(9, 0.1, label_preds_, scores_)
-    
+
     for key in image_anno.keys():
         if key == 'metadata':
             continue
         img_filtered_annotations[key] = (
             image_anno[key][car_indices +
-                            pedestrain_indices + 
+                            pedestrain_indices +
                             bicycle_indices +
                             bus_indices +
                             construction_vehicle_indices +
@@ -78,10 +81,10 @@ class Processor_ROS:
         self.net = None
         self.voxel_generator = None
         self.inputs = None
-        
+
     def initialize(self):
         self.read_config()
-        
+
     def read_config(self):
         config_path = self.config_path
         cfg = Config.fromfile(self.config_path)
@@ -94,6 +97,8 @@ class Processor_ROS:
         self.voxel_size = cfg.voxel_generator.voxel_size
         self.max_points_in_voxel = cfg.voxel_generator.max_points_in_voxel
         self.max_voxel_num = cfg.voxel_generator.max_voxel_num
+        if isinstance(self.max_voxel_num, list):
+            self.max_voxel_num = self.max_voxel_num[0]
         self.voxel_generator = VoxelGenerator(
             voxel_size=self.voxel_size,
             point_cloud_range=self.range,
@@ -104,20 +109,20 @@ class Processor_ROS:
     def run(self, points):
         t_t = time.time()
         print(f"input points shape: {points.shape}")
-        num_features = 5        
+        num_features = 5
         self.points = points.reshape([-1, num_features])
-        self.points[:, 4] = 0 # timestamp value 
-        
+        self.points[:, 4] = 0 # timestamp value
+
         voxels, coords, num_points = self.voxel_generator.generate(self.points)
         num_voxels = np.array([voxels.shape[0]], dtype=np.int64)
         grid_size = self.voxel_generator.grid_size
         coords = np.pad(coords, ((0, 0), (1, 0)), mode='constant', constant_values = 0)
-        
+
         voxels = torch.tensor(voxels, dtype=torch.float32, device=self.device)
         coords = torch.tensor(coords, dtype=torch.int32, device=self.device)
         num_points = torch.tensor(num_points, dtype=torch.int32, device=self.device)
         num_voxels = torch.tensor(num_voxels, dtype=torch.int32, device=self.device)
-        
+
         self.inputs = dict(
             voxels = voxels,
             num_points = num_points,
@@ -130,9 +135,9 @@ class Processor_ROS:
 
         with torch.no_grad():
             outputs = self.net(self.inputs, return_loss=False)[0]
-    
+
         # print(f"output: {outputs}")
-        
+
         torch.cuda.synchronize()
         print("  network predict time cost:", time.time() - t)
 
@@ -196,27 +201,30 @@ def rslidar_callback(msg):
     print("  ")
     scores, dt_box_lidar, types = proc_1.run(np_p)
 
+    # (pos, rot) = listener.lookupTransform('map', msg.header.frame_id, rospy.Time(0))
+
     if scores.size != 0:
         for i in range(scores.size):
             bbox = BoundingBox()
-            bbox.header.frame_id = msg.header.frame_id
-            bbox.header.stamp = rospy.Time.now()
+            bbox.header.frame_id = msg.header.frame_id #'map'
+            bbox.header.stamp = msg.header.stamp#rospy.Time.now()
             q = yaw2quaternion(float(dt_box_lidar[i][8]))
-            bbox.pose.orientation.x = q[1]
-            bbox.pose.orientation.y = q[2]
-            bbox.pose.orientation.z = q[3]
-            bbox.pose.orientation.w = q[0]           
-            bbox.pose.position.x = float(dt_box_lidar[i][0])
-            bbox.pose.position.y = float(dt_box_lidar[i][1])
-            bbox.pose.position.z = float(dt_box_lidar[i][2])
+            bbox.pose.orientation.x = q[1]#* rot[0]
+            bbox.pose.orientation.y = q[2]#* rot[1]
+            bbox.pose.orientation.z = q[3]#* rot[2]
+            bbox.pose.orientation.w = q[0]#* rot[3]
+            bbox.pose.position.x = float(dt_box_lidar[i][0])# + pos[0])
+            bbox.pose.position.y = float(dt_box_lidar[i][1])# + pos[1])
+            bbox.pose.position.z = float(dt_box_lidar[i][2])# + pos[2])
             bbox.dimensions.x = float(dt_box_lidar[i][4])
             bbox.dimensions.y = float(dt_box_lidar[i][3])
             bbox.dimensions.z = float(dt_box_lidar[i][5])
             bbox.value = scores[i]
             bbox.label = int(types[i])
-            arr_bbox.boxes.append(bbox)
+            if bbox.value>0.5:
+                arr_bbox.boxes.append(bbox)
     print("total callback time: ", time.time() - t_t)
-    arr_bbox.header.frame_id = msg.header.frame_id
+    arr_bbox.header.frame_id = msg.header.frame_id#'map'
     arr_bbox.header.stamp = msg.header.stamp
     if len(arr_bbox.boxes) is not 0:
         pub_arr_bbox.publish(arr_bbox)
@@ -224,30 +232,79 @@ def rslidar_callback(msg):
     else:
         arr_bbox.boxes = []
         pub_arr_bbox.publish(arr_bbox)
-   
+
+def rslidar_callback_1(msg):
+    t_t = time.time()
+    arr_bbox = Detection3DArray()
+
+    msg_cloud = ros_numpy.point_cloud2.pointcloud2_to_array(msg)
+    np_p = get_xyz_points(msg_cloud, True)
+    print("  ")
+    scores, dt_box_lidar, types = proc_1.run(np_p)
+
+    if scores.size != 0:
+        for i in range(scores.size):
+            det = Detection3D()
+            det.header.frame_id = msg.header.frame_id #'map'
+            det.header.stamp = rospy.Time.now()
+            bbox = BoundingBox3D()
+
+            q = yaw2quaternion(float(dt_box_lidar[i][8]))
+            bbox.center.orientation.x = q[1]
+            bbox.center.orientation.y = q[2]
+            bbox.center.orientation.z = q[3]
+            bbox.center.orientation.w = q[0]
+            bbox.center.position.x = float(dt_box_lidar[i][0])
+            bbox.center.position.y = float(dt_box_lidar[i][1])
+            bbox.center.position.z = float(dt_box_lidar[i][2])
+            bbox.size.x = float(dt_box_lidar[i][0])
+            bbox.size.y = float(dt_box_lidar[i][1])
+            bbox.size.z = float(dt_box_lidar[i][2])
+
+            det.bbox = bbox
+            # bbox.value = scores[i]
+            # bbox.label = int(types[i])
+            if scores[i]>0.5:
+                arr_bbox.detections.append(det)
+    print("total callback time: ", time.time() - t_t)
+    arr_bbox.header.frame_id = msg.header.frame_id #'map'
+    arr_bbox.header.stamp = msg.header.stamp
+    if len(arr_bbox.detections) is not 0:
+        pub_arr_bbox.publish(arr_bbox)
+        arr_bbox.detections = []
+    else:
+        arr_bbox.detections = []
+        pub_arr_bbox.publish(arr_bbox)
+
+
 if __name__ == "__main__":
 
     global proc
     ## CenterPoint
-    config_path = 'configs/centerpoint/nusc_centerpoint_pp_02voxel_circle_nms_demo.py'
-    model_path = 'models/last.pth'
+    config_path = 'configs/nusc/voxelnet/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z.py'#'configs/nusc/pp/nusc_centerpoint_pp_02voxel_two_pfn_10sweep.py'
+    model_path = 'work_dirs/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z/epoch_20.pth'#'work_dirs/nusc_02_pp/latest.pth'
 
     proc_1 = Processor_ROS(config_path, model_path)
-    
-    proc_1.initialize()
-    
-    rospy.init_node('centerpoint_ros_node')
-    sub_lidar_topic = [ "/velodyne_points", 
-                        "/top/rslidar_points",
-                        "/points_raw", 
-                        "/lidar_protector/merged_cloud", 
-                        "/merged_cloud",
-                        "/lidar_top", 
-                        "/roi_pclouds"]
-    
-    sub_ = rospy.Subscriber(sub_lidar_topic[5], PointCloud2, rslidar_callback, queue_size=1, buff_size=2**24)
-    
-    pub_arr_bbox = rospy.Publisher("pp_boxes", BoundingBoxArray, queue_size=1)
 
-    print("[+] CenterPoint ros_node has started!")    
+    proc_1.initialize()
+
+    rospy.init_node('centerpoint_ros_node')
+    sub_lidar_topic = [ "/velodyne_points",
+                        "/top/rslidar_points",
+                        "/points_raw",
+                        "/lidar_protector/merged_cloud",
+                        "/merged_cloud",
+                        "/lidar_top",
+                        "/roi_pclouds",
+                        "/kitti/velo/pointcloud"]
+
+    global listener
+    listener = tf.TransformListener()
+
+    sub_ = rospy.Subscriber(sub_lidar_topic[-1], PointCloud2, rslidar_callback, queue_size=1, buff_size=2**24)
+
+    pub_arr_bbox = rospy.Publisher("pp_boxes", BoundingBoxArray, queue_size=1)
+    # pub_arr_bbox = rospy.Publisher("pp_boxes", Detection3DArray, queue_size=1)
+
+    print("[+] CenterPoint ros_node has started!")
     rospy.spin()
