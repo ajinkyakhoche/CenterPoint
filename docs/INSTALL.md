@@ -12,17 +12,17 @@ Modified from [det3d](https://github.com/poodarchu/Det3D/tree/56402d4761a5b73acd
 - [spconv](https://github.com/traveller59/spconv/commit/73427720a539caf9a44ec58abe3af7aa9ddb8e39) 
 
 #### Notes
-- spconv should be the specific version from links above
-- The spconv version after this commit will consume much more memory. 
-- A rule of thumb is that your pytorch cuda version must match the cuda version of your systsem for other cuda extensions to work properly. 
+- Both Spconv 1.x and 2.x work.
+- Recent pytorch/spconv/cuda version will be faster and consume less memory. 
+- If you have problem installing apex, you can change the apex syncbn to torch's native sync bn at https://github.com/tianweiy/CenterPoint/blob/3fd0b8745b77575cb9810035aafc76796613f942/det3d/torchie/apis/train.py#L268.
 
 we have tested the following versions of OS and softwares:
 
 - OS: Ubuntu 16.04/18.04
-- Python: 3.6.5
-- PyTorch: 1.1
-- CUDA: 10.0
-- CUDNN: 7.5.0
+- Python: 3.6.5/3.7.10 
+- PyTorch: 1.1/1.9/1.10.1
+- spconv: 1.0/1.2.1/master
+- CUDA: 10.0/11.1
 
 ### Basic Installation 
 
@@ -58,10 +58,17 @@ export PATH=/usr/local/cuda-10.0/bin:$PATH
 export CUDA_PATH=/usr/local/cuda-10.0
 export CUDA_HOME=/usr/local/cuda-10.0
 export LD_LIBRARY_PATH=/usr/local/cuda-10.0/lib64:$LD_LIBRARY_PATH
-bash setup.sh 
+
+# Rotated NMS 
+cd ROOT_DIR/det3d/ops/iou3d_nms
+python setup.py build_ext --inplace
+
+# Deformable Convolution (Optional and only works with old torch versions e.g. 1.1)
+cd ROOT_DIR/det3d/ops/dcn
+python setup.py build_ext --inplace
 ```
 
-#### APEX
+#### APEX (Optional)
 
 ```bash
 git clone https://github.com/NVIDIA/apex

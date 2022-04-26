@@ -15,6 +15,7 @@ class TwoStageDetector(BaseDetector):
         NMS_POST_MAXSIZE,
         num_point=1,
         freeze=False,
+        use_final_feature=False,
         **kwargs
     ):
         super(TwoStageDetector, self).__init__()
@@ -36,6 +37,7 @@ class TwoStageDetector(BaseDetector):
         self.roi_head = builder.build_roi_head(roi_head)
 
         self.num_point = num_point
+        self.use_final_feature = use_final_feature
 
     def combine_loss(self, one_stage_loss, roi_loss, tb_dict):
         one_stage_loss['loss'][0] += (roi_loss)
@@ -154,8 +156,9 @@ class TwoStageDetector(BaseDetector):
     def forward(self, example, return_loss=True, **kwargs):
         out = self.single_det.forward_two_stage(example, 
             return_loss, **kwargs)
-        if len(out) == 4:
-            one_stage_pred, bev_feature, voxel_feature, one_stage_loss = out 
+
+        if len(out) == 5:
+            one_stage_pred, bev_feature, voxel_feature, final_feature, one_stage_loss = out 
             example['voxel_feature'] = voxel_feature
         elif len(out) == 3:
             one_stage_pred, bev_feature, one_stage_loss = out 
@@ -163,7 +166,10 @@ class TwoStageDetector(BaseDetector):
             raise NotImplementedError
 
         # N C H W -> N H W C 
-        example['bev_feature'] = bev_feature.permute(0, 2, 3, 1).contiguous()
+        if self.use_final_feature:
+            example['bev_feature'] = final_feature.permute(0, 2, 3, 1).contiguous()
+        else:
+            example['bev_feature'] = bev_feature.permute(0, 2, 3, 1).contiguous()
         
         centers_vehicle_frame = self.get_box_center(one_stage_pred)
 
