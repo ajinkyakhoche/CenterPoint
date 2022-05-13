@@ -335,6 +335,8 @@ if __name__ == "__main__":
                         "/merged_cloud",
                         "/lidar_top",
                         "/roi_pclouds",
+                        ]
+
     # # global listener
     # listener = tf.TransformListener()
 
