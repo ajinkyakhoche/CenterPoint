@@ -107,6 +107,7 @@ class Processor_ROS:
             max_num_points=self.max_points_in_voxel,
             max_voxels=self.max_voxel_num,
         )
+        self.class_names = cfg._cfg_dict['class_names']
 
     def run(self, points):
         t_t = time.time()
