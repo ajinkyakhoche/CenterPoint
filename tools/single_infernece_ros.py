@@ -9,6 +9,7 @@ import os
 import sys
 import torch
 import time
+import argparse
 
 from std_msgs.msg import Header
 import sensor_msgs.point_cloud2 as pc2
@@ -276,15 +277,32 @@ def rslidar_callback_1(msg):
         arr_bbox.detections = []
         pub_arr_bbox.publish(arr_bbox)
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Tracking Evaluation")
+    parser.add_argument("--config_path", help="config path to NN", default="configs/nusc/voxelnet/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z.py")
+    parser.add_argument(
+        "--model_path", help="path to NN weights", default="work_dirs/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z/epoch_20.pth"
+    )
+    parser.add_argument("--hungarian", action='store_true')
+    parser.add_argument("--max_age", type=int, default=10)
+    parser.add_argument("--tracking", action='store_true', default=True)
+    parser.add_argument("--global_frame", type=str, default='/Smooth')
+    
+    args = parser.parse_args()
+
+    return args
 
 if __name__ == "__main__":
+    # global proc
+    args = parse_args()
+    print('Deploy OK')
 
     global proc
     ## CenterPoint
     config_path = 'configs/nusc/voxelnet/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z.py'#'configs/nusc/pp/nusc_centerpoint_pp_02voxel_two_pfn_10sweep.py'
     model_path = 'work_dirs/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z/epoch_20.pth'#'work_dirs/nusc_02_pp/latest.pth'
 
-    proc_1 = Processor_ROS(config_path, model_path)
+    proc_1 = Processor_ROS(args.config_path, args.model_path)
 
     proc_1.initialize()
 
