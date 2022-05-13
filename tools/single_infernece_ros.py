@@ -319,8 +319,8 @@ if __name__ == "__main__":
 
     global proc
     ## CenterPoint
-    config_path = 'configs/nusc/voxelnet/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z.py'#'configs/nusc/pp/nusc_centerpoint_pp_02voxel_two_pfn_10sweep.py'
-    model_path = 'work_dirs/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z/epoch_20.pth'#'work_dirs/nusc_02_pp/latest.pth'
+    # config_path = 'configs/nusc/voxelnet/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z.py'#'configs/nusc/pp/nusc_centerpoint_pp_02voxel_two_pfn_10sweep.py'
+    # model_path = 'work_dirs/nusc_centerpoint_voxelnet_0075voxel_fix_bn_z/epoch_20.pth'#'work_dirs/nusc_02_pp/latest.pth'
 
     proc_1 = Processor_ROS(args.config_path, args.model_path)
 
@@ -334,7 +334,8 @@ if __name__ == "__main__":
                         "/merged_cloud",
                         "/lidar_top",
                         "/roi_pclouds",
-                        "/kitti/velo/pointcloud"]
+    # # global listener
+    # listener = tf.TransformListener()
 
     if args.tracking:
         # initialize tracking
