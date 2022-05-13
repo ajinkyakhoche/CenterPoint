@@ -23,6 +23,7 @@ from geometry_msgs.msg import TwistStamped
 from det3d.models import build_detector
 from det3d.torchie import Config
 from det3d.core.input.voxel_generator import VoxelGenerator
+from nusc_tracking.pub_tracker_ros import PubTracker as Tracker
 
 def yaw2quaternion(yaw: float) -> Quaternion:
     return Quaternion(axis=[0,0,1], radians=yaw)
@@ -234,47 +235,66 @@ def rslidar_callback(msg):
         arr_bbox.boxes = []
         pub_arr_bbox.publish(arr_bbox)
 
-def rslidar_callback_1(msg):
+    
+def rstracker_callback(msg):
     t_t = time.time()
-    arr_bbox = Detection3DArray()
+    arr_bbox = BoundingBoxArray()
 
     msg_cloud = ros_numpy.point_cloud2.pointcloud2_to_array(msg)
     np_p = get_xyz_points(msg_cloud, True)
     print("  ")
     scores, dt_box_lidar, types = proc_1.run(np_p)
 
-    if scores.size != 0:
+    # (pos, rot) = listener.lookupTransform('map', msg.header.frame_id, rospy.Time(0))
+
+    # if args.tracking:
+    if tracker.last_time_stamp == 0:
+        tracker.last_time_stamp = msg.header.stamp.to_sec()
+    time_lag = (msg.header.stamp.to_sec() - tracker.last_time_stamp) 
+    tracker.last_time_stamp = msg.header.stamp.to_sec()
+    pred = []
         for i in range(scores.size):
-            det = Detection3D()
-            det.header.frame_id = msg.header.frame_id #'map'
-            det.header.stamp = rospy.Time.now()
-            bbox = BoundingBox3D()
-
+        if scores[i] > 0.65:
             q = yaw2quaternion(float(dt_box_lidar[i][8]))
-            bbox.center.orientation.x = q[1]
-            bbox.center.orientation.y = q[2]
-            bbox.center.orientation.z = q[3]
-            bbox.center.orientation.w = q[0]
-            bbox.center.position.x = float(dt_box_lidar[i][0])
-            bbox.center.position.y = float(dt_box_lidar[i][1])
-            bbox.center.position.z = float(dt_box_lidar[i][2])
-            bbox.size.x = float(dt_box_lidar[i][0])
-            bbox.size.y = float(dt_box_lidar[i][1])
-            bbox.size.z = float(dt_box_lidar[i][2])
+            pred.append(dict(
+                translation=[dt_box_lidar[i][0], dt_box_lidar[i][1], dt_box_lidar[i][2]],
+                rotation=[q[1], q[2], q[3], q[0]],
+                size=[dt_box_lidar[i][4], dt_box_lidar[i][3], dt_box_lidar[i][5]],
+                velocity=[dt_box_lidar[i][6], dt_box_lidar[i][7]],
+                detection_name=proc_1.class_names[types[i]],
+                detection_score=scores[i])
+            )
 
-            det.bbox = bbox
-            # bbox.value = scores[i]
-            # bbox.label = int(types[i])
-            if scores[i]>0.5:
-                arr_bbox.detections.append(det)
+    outputs = tracker.step_centertrack(pred, time_lag=time_lag)
+
+    if len(outputs) != 0:
+        for i in range(len(outputs)):
+            bbox = BoundingBox()
+            bbox.header.frame_id = msg.header.frame_id #'map'
+            bbox.header.stamp = msg.header.stamp#rospy.Time.now()
+            # q = yaw2quaternion(float(dt_box_lidar[i][8]))
+            bbox.pose.orientation.x = outputs[i]['rotation'][0]
+            bbox.pose.orientation.y = outputs[i]['rotation'][1]
+            bbox.pose.orientation.z = outputs[i]['rotation'][2]
+            bbox.pose.orientation.w = outputs[i]['rotation'][3]
+            bbox.pose.position.x = outputs[i]['translation'][0]
+            bbox.pose.position.y = outputs[i]['translation'][1]
+            bbox.pose.position.z = outputs[i]['translation'][2]
+            bbox.dimensions.x = outputs[i]['size'][0]
+            bbox.dimensions.y = outputs[i]['size'][1]
+            bbox.dimensions.z = outputs[i]['size'][2]
+            bbox.value = outputs[i]['tracking_id']#scores[i]
+            bbox.label = int(outputs[i]['label_preds'])
+            # if bbox.value>0.25:
+            arr_bbox.boxes.append(bbox)
     print("total callback time: ", time.time() - t_t)
-    arr_bbox.header.frame_id = msg.header.frame_id #'map'
+    arr_bbox.header.frame_id = msg.header.frame_id#'map'
     arr_bbox.header.stamp = msg.header.stamp
-    if len(arr_bbox.detections) is not 0:
+    if len(arr_bbox.boxes) is not 0:
         pub_arr_bbox.publish(arr_bbox)
-        arr_bbox.detections = []
+        arr_bbox.boxes = []
     else:
-        arr_bbox.detections = []
+        arr_bbox.boxes = []
         pub_arr_bbox.publish(arr_bbox)
 
 def parse_args():
@@ -316,10 +336,12 @@ if __name__ == "__main__":
                         "/roi_pclouds",
                         "/kitti/velo/pointcloud"]
 
-    global listener
-    listener = tf.TransformListener()
+    if args.tracking:
+        # initialize tracking
+        tracker = Tracker(max_age=args.max_age, hungarian=args.hungarian)
+        tracker.reset()
 
-    sub_ = rospy.Subscriber(sub_lidar_topic[-1], PointCloud2, rslidar_callback, queue_size=1, buff_size=2**24)
+    sub_ = rospy.Subscriber(sub_lidar_topic[-2], PointCloud2, rstracker_callback, queue_size=1, buff_size=2**24)
 
     pub_arr_bbox = rospy.Publisher("pp_boxes", BoundingBoxArray, queue_size=1)
     # pub_arr_bbox = rospy.Publisher("pp_boxes", Detection3DArray, queue_size=1)
