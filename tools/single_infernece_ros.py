@@ -130,7 +130,8 @@ class Processor_ROS:
             num_points = num_points,
             num_voxels = num_voxels,
             coordinates = coords,
-            shape = [grid_size]
+            shape = [grid_size],
+            points = [grid_size]
         )
         torch.cuda.synchronize()
         t = time.time()
