@@ -23,7 +23,7 @@ from geometry_msgs.msg import TwistStamped
 from det3d.models import build_detector
 from det3d.torchie import Config
 from det3d.core.input.voxel_generator import VoxelGenerator
-from nusc_tracking.pub_tracker_ros import PubTracker as Tracker
+from nusc_tracking.pub_tracker import PubTracker as Tracker
 
 def yaw2quaternion(yaw: float) -> Quaternion:
     return Quaternion(axis=[0,0,1], radians=yaw)
